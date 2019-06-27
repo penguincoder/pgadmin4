@@ -36,6 +36,7 @@ define('tools.querytool', [
   'sources/sqleditor/call_render_after_poll',
   'sources/sqleditor/query_tool_preferences',
   'sources/csrf',
+  'tools/datagrid/static/js/datagrid_panel_title',
   'sources/../bundle/slickgrid',
   'pgadmin.file_manager',
   'backgrid.sizeable.columns',
@@ -50,7 +51,7 @@ define('tools.querytool', [
   XCellSelectionModel, setStagedRows, SqlEditorUtils, ExecuteQuery, httpErrorHandler, FilterHandler,
   GeometryViewer, historyColl, queryHist,
   keyboardShortcuts, queryToolActions, queryToolNotifications, Datagrid,
-  modifyAnimation, calculateQueryRunTime, callRenderAfterPoll, queryToolPref, csrfToken) {
+  modifyAnimation, calculateQueryRunTime, callRenderAfterPoll, queryToolPref, csrfToken, panelTitleFunc) {
   /* Return back, this has been called more than once */
   if (pgAdmin.SqlEditor)
     return pgAdmin.SqlEditor;
@@ -340,7 +341,30 @@ define('tools.querytool', [
         gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
         extraKeys: pgBrowser.editor_shortcut_keys,
         scrollbarStyle: 'simple',
+        dragDrop: false,
       });
+
+      if(self.handler.is_query_tool) {
+        self.query_tool_obj.setOption('dragDrop', true);
+        self.query_tool_obj.on('drop', (editor, e) => {
+          var cursor = editor.coordsChar({
+            left: e.x,
+            top: e.y,
+          });
+          var dropDetails = JSON.parse(e.dataTransfer.getData('text'));
+          e.codemirrorIgnore = true;
+          e.dataTransfer.clearData('text');
+          editor.replaceRange(dropDetails.text, cursor);
+          editor.focus();
+          editor.setSelection({
+            ...cursor,
+            ch: cursor.ch + dropDetails.cur.from,
+          },{
+            ...cursor,
+            ch: cursor.ch +dropDetails.cur.to,
+          });
+        });
+      }
 
       pgBrowser.Events.on('pgadmin:query_tool:sql_panel:focus', ()=>{
         self.query_tool_obj.focus();
@@ -560,8 +584,6 @@ define('tools.querytool', [
         };
       });
 
-      pgBrowser.bind_beforeunload();
-
       /* If the screen width is small and we hover over the Explain Options,
         * the submenu goes behind the screen on the right side.
         * Below logic will make it appear on the left.
@@ -607,6 +629,7 @@ define('tools.querytool', [
        * instead, a poller is set up who will check
        */
       if(self.preferences.new_browser_tab) {
+        pgBrowser.bind_beforeunload();
         setInterval(()=>{
           if(window.opener.pgAdmin) {
             self.reflectPreferences();
@@ -783,7 +806,7 @@ define('tools.querytool', [
           pos: c.pos,
           field: c.name,
           name: c.label,
-          display_name: c.display_name,
+          display_name: _.escape(c.display_name),
           column_type: c.column_type,
           column_type_internal: c.column_type_internal,
           not_null: c.not_null,
@@ -794,7 +817,7 @@ define('tools.querytool', [
         // Get the columns width based on longer string among data type or
         // column name.
         var column_type = c.column_type.trim();
-        var label = c.name.length > column_type.length ? c.name : column_type;
+        var label = c.name.length > column_type.length ? _.escape(c.display_name) : column_type;
 
         if (_.isUndefined(column_size[table_name][c.name])) {
           options['width'] = SqlEditorUtils.calculateColumnWidth(label);
@@ -3046,7 +3069,7 @@ define('tools.querytool', [
       },
 
       // Set panel title.
-      setTitle: function(title, unsafe) {
+      setTitle: function(title, is_file) {
         var self = this;
 
         if (self.preferences.new_browser_tab) {
@@ -3054,10 +3077,7 @@ define('tools.querytool', [
         } else {
           _.each(window.top.pgAdmin.Browser.docker.findPanels('frm_datagrid'), function(p) {
             if (p.isVisible()) {
-              if(unsafe) {
-                title = _.escape(title);
-              }
-              p.title(title);
+              panelTitleFunc.setQueryToolDockerTitle(p, self.is_query_tool, title, is_file);
             }
           });
         }
